@@ -10,7 +10,7 @@ httpx_logger.setLevel(WARNING)
 
 TOKEN = getenv('USER_AUTH', '')
 PREFIX = '.'
-CACHE_CHANNEL = 1488928868134944888
-GIF_NAME = 'kowalsky13.gif'
+CACHE_CHANNEL = 0
+GIF_NAME = '.gif'
 DEFAULT_LINE = 'made w/ <3'
 DEFAULT_COVER = 'L4NDBxhCjUO4q4dO_VlTd9zd9UctQ38AkVh7-f0jrfM/https/files.catbox.moe/uuxijp.png'
