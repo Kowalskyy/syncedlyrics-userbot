@@ -18,7 +18,7 @@ syncs live lyrics to your discord status from basically anything running on your
 1. install requirements:
    `pip install discord.py-self syncedlyrics httpx python-dotenv`
 2. create a `.env` file and put your token there:
-   `USER_AUTH=your_token_here`
+   `USER_AUTH='your_token_here'`
 3. change cache_channel id in `config.py`
 4. run `python main.py`
 
@@ -43,6 +43,6 @@ syncedlyrics for the heavy lifting.
 
 me for the not killing myself
 
-mxreengine for motivating me to make this public
+mxrengine for motivating me to make this public
 
 hoyoverse for making honkai: star rail
