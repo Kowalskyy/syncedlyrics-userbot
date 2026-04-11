@@ -9,9 +9,10 @@ async def get_media_info() -> dict:
 	try:
 		sessions = await mc.request_async()
 		current_session = sessions.get_current_session()
-		if not current_session: logger.warning('no media sessions!\ntry to enable music on browser'); return {}
+		if not current_session: logger.debug('no media sessions'); return {}
 		
 		props = await current_session.try_get_media_properties_async()
+		if not props: return {}
 		timeline = current_session.get_timeline_properties()
 		status = current_session.get_playback_info().playback_status
 		
@@ -19,8 +20,8 @@ async def get_media_info() -> dict:
 		dur = timeline.end_time.total_seconds()
 
 		return {
-			'title': props.title if props else '',
-			'artist': props.artist if props else '',
+			'title': props.title,
+			'artist': props.artist,
 			'status': status,
 			'position': pos,
 			'duration': dur

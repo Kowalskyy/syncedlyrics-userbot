@@ -30,7 +30,7 @@ class Status(commands.Cog):
 		self.last_tick = time.time()
 
 	async def _fetch_lyrics(self, query: str):
-		raw = await asyncio.to_thread(syncedlyrics.search, query, False, True, None, [])
+		raw = await asyncio.to_thread(syncedlyrics.search, query, False, True, None, ['Musixmatch', 'Lrclib', 'NetEase', 'Megalobiz'])
 		if not raw or self.current_track != query: return
 		lyrics = []
 		for line in raw.splitlines():
@@ -118,9 +118,12 @@ class Status(commands.Cog):
 	@tasks.loop(seconds=1)
 	async def lyrics_loop(self):
 		info = await get_media_info()
-		if not info: return
+		if not info: 
+			self.is_active = False; self.lyrics_loop.stop(); await self.bot.change_presence(activity=None) # type: ignore
+			logger.info('Lyrics disabled due to no active SMTC sessions'); return
 
 		artist, title = info['artist'], info['title']
+		if not artist and not title: return
 		full_name = f'{artist} - {title}'
 
 		# new track handler
