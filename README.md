@@ -16,7 +16,7 @@ syncs live lyrics to your discord status from basically anything running on your
 
 ## setup
 1. install requirements:
-   `pip install discord.py-self syncedlyrics httpx python-dotenv`
+   `pip install discord.py-self syncedlyrics httpx python-dotenv fuzzywuzzy[speedup]`
 2. create a `.env` file and put your token there:
    `USER_AUTH='your_token_here'`
 3. change cache_channel id in `config.py`
@@ -28,6 +28,9 @@ syncs live lyrics to your discord status from basically anything running on your
 - `.gif` - converts replied image to gif
 - `.cid` - gets current channel id (use it before using .lyrics PLEASE)
 - `.url` - extracts proxy urls from embeds
+
+## subcommands
+- `.lyrics {stats | features | web}` - enables audio-features web as small image, requires a bit more time to process (turned on by default)
 
 ## customization
 customization is made in the `config.py` file

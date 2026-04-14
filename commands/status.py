@@ -1,11 +1,12 @@
-from config import CACHE_CHANNEL, DEFAULT_LINE, DEFAULT_COVER
-from discord import Activity, ActivityType
+from discord import Activity, ActivityType, ActivityButton
+from config import DEFAULT_LINE, DEFAULT_COVER
 from discord.ext import commands, tasks
-from utils import get_media_info
 from logging import getLogger
+from fuzzywuzzy import fuzz
 import syncedlyrics
 import asyncio
 import httpx
+import utils
 import time
 
 logger = getLogger('status')
@@ -21,12 +22,15 @@ class Status(commands.Cog):
 
 		self.track_provider = None
 		self.track_duration = 0
+		self.track_isrc = ''
 
 		self.last_reported_pos = -1
 		self.elapsed = 0.0
 		self.last_tick = time.time()
 
 		self.urls = {}
+		self.stats = {}
+		self.create_stats = True
 
 	async def _fetch_lyrics(self, query: str):
 		raw = await asyncio.to_thread(syncedlyrics.search, query, False, True, None, ['Musixmatch', 'Lrclib', 'NetEase', 'Megalobiz'])
@@ -42,24 +46,13 @@ class Status(commands.Cog):
 			except: continue
 		self.current_lyrics = lyrics
 
-	async def _fetch_and_proxy_cover(self, artist: str, title: str, expected_track: str):
+	async def _fetch_and_proxy_data(self, query:str):
 		cover_url = None
-		query = f'{artist} - {title}'
 
 		headers = {"User-Agent": "Mozilla/5.0"}
 		
 		async with httpx.AsyncClient(headers=headers) as client:
 			services = {
-				'apple.music': {
-					'base_url': 'https://itunes.apple.com/search',
-					'params': {'term': query, 'entity': 'song', 'limit': 1, 'country': 'us'},
-					'cover_path': ['results', 0, 'artworkUrl100'], 
-					'duration_path': ['results', 0, 'trackTimeMillis'],
-					'track_url_path': ['results', 0, 'trackViewUrl'],
-					'artist_url_path': ['results', 0, 'artistViewUrl'],
-					'album_url_path': ['results', 0, 'collectionViewUrl'],
-					'result_key': 'resultCount'
-				},
 				'deezer': {
 					'base_url': 'https://api.deezer.com/search',
 					'params': {'q': query, 'limit': 1},
@@ -68,18 +61,35 @@ class Status(commands.Cog):
 					'track_url_path': ['data', 0, 'link'],
 					'artist_url_path': ['data', 0, 'artist', 'link'],
 					'album_url_path': ['data', 0, 'album', 'id'],
+					'track_name': ['data', 0, 'title'],
+					'artist_name': ['data', 0, 'artist', 'name'],
 					'result_key': 'total'
+				},
+				'apple.music': {
+					'base_url': 'https://itunes.apple.com/search',
+					'params': {'term': query, 'entity': 'song', 'limit': 1, 'country': 'us'},
+					'cover_path': ['results', 0, 'artworkUrl100'], 
+					'duration_path': ['results', 0, 'trackTimeMillis'],
+					'track_url_path': ['results', 0, 'trackViewUrl'],
+					'artist_url_path': ['results', 0, 'artistViewUrl'],
+					'album_url_path': ['results', 0, 'collectionViewUrl'],
+					'track_name': ['results', 0, 'trackName'],
+					'artist_name': ['results', 0, 'artistName'],
+					'result_key': 'resultCount'
 				}
 			}
-			try:
-				for name, service in services.items():
-					base_url, params, coverp, durationp, trackp, artistp, albump, rkey = service.values()
+			for name, service in services.items():
+				base_url, params, coverp, durationp, trackp, artistp, albump, tname, aname, rkey = service.values()
+				try:
 					rjson = (await client.get(base_url, params=params)).json()
 					if rjson.get(rkey, 0) > 0:
-						self.track_provider = name
 						def walk(data, path):
 							for k in path: data = data[k] if isinstance(data, list) else data.get(k, {})
 							return data
+
+						if not fuzz.ratio(f'{walk(rjson, aname)} - {walk(rjson, tname)}', query) >= 60: continue # somewhy deezer api sucks at searching
+
+						self.track_provider = name
 						cover_url, self.track_duration = walk(rjson, coverp), walk(rjson, durationp)
 						self.urls = {
 							'track': walk(rjson, trackp),
@@ -90,43 +100,84 @@ class Status(commands.Cog):
 							cover_url = cover_url.replace('100x100', '1000x1000')
 							self.track_duration /= 1000
 							self.urls['track'] = self.urls['track'].split('?')[0]
-						if name == 'deezer': self.urls['album'] = f"https://www.deezer.com/album/{self.urls['album']}"
+						if name == 'deezer': self.urls['album'], self.track_isrc = f"https://www.deezer.com/album/{self.urls['album']}", rjson.get('data')[0]['isrc']
 						if cover_url: logger.info(f'found info on {name}'); break
-			except Exception as e: logger.error(f'cover not found due to {e}')
+				except Exception as e: logger.error(f'cover not found on {name} due to {e}')
 
-		if not cover_url or self.current_track != expected_track: logger.error(f'cover not found'); return
-		
+		if not cover_url or self.current_track != query: logger.error(f'cover not found'); return
+
 		try:
-			channel = self.bot.get_channel(CACHE_CHANNEL) or await self.bot.fetch_channel(CACHE_CHANNEL)
-			msg = await channel.send(cover_url) #type: ignore
-			for _ in range(4):
-				await asyncio.sleep(1)
-				msg = await channel.fetch_message(msg.id) #type: ignore
-				if msg.embeds and (img := (msg.embeds[0].thumbnail or msg.embeds[0].image)):
-					if img.proxy_url and '/external/' in img.proxy_url:
-						if self.current_track == expected_track:
-							self.urls['cover'] = f"mp:external/{img.proxy_url.split('/external/')[1]}"
-							self.last_sent_line = ""
-						break
-			await msg.delete()
+			urls = [cover_url]
+			if self.track_isrc and (url := await self._fetch_mood()): urls.append(url)
+			proxified_urls = await utils.proxy_image(urls, self.bot)
+			self.urls['cover'] = f'mp:external/{proxified_urls[0]}'
+			if len(proxified_urls) >= 2: self.urls['small_image'] = f'mp:external/{proxified_urls[1]}'
+			self.last_sent_line = 'covers!'
 		except Exception as e: logger.error(f"proxy error: {e}")
+
+	async def _fetch_mood(self):
+		if not self.create_stats: return None
+		base_url = 'https://api.reccobeats.com/v1/track'
+
+		async with httpx.AsyncClient() as client:
+			rbid = ((await client.get(f'{base_url}?ids={self.track_isrc}')).json().get('content', [{}]) or [{}])[0].get('id', '')
+			if not rbid: return
+			data = (await client.get(f'{base_url}/{rbid}/audio-features')).json()
+			_, __, ___, a, d, e, i, k, l, ld, m, s, t, v = data.values()
+			self.stats = data
+			# L = max(0.2, (ld + 20) / 20) * 255
+			# return "{:02x}{:02x}{:02x}".format(*[int(max(0, min(1, v)) * L) for v in (e - a/2, v * (1 if m==0 else 0.3), a + (1 - e)/2)])
+			L = max(0.2, (ld + 20) / 20) * 255
+			color_hex = "{:02x}{:02x}{:02x}".format(*[int(max(0, min(1, v)) * L) for v in (e - a/2, v * (1 if m==0 else 0.3), a + (1 - e)/2 + s + max(0, 0.2 - v))])
+
+			chart_data = {
+				'type': 'radar',
+				'data': {
+					'labels': ['' for _ in range(8)],
+					'datasets': [{
+						'data': [a,d,e,i,l,max(0, min(1, (ld + 60) / 60)),s,v],
+						'backgroundColor': f'rgba({",".join([str((int(color_hex[i:i+2],16))) for i in range(0,5,2)])},0.9)',
+						'borderColor': f'rgb({",".join([str(((c:=int(color_hex[i:i+2],16))+(255-c)//3)) for i in range(0,5,2)])})', 'borderWidth': 3, 'pointRadius': 0
+					}]
+				},
+				'options': {
+					'legend': {'display': False},
+					'scale': {
+						'display': True,
+						'ticks': {'display': False, 'min': 0, 'max': 1, 'stepSize': 0.33},
+						'gridLines': {'color': 'rgba(255,255,255,0.6)', 'lineWidth':2},
+						'angleLines': {'color': 'rgba(255,255,255,0.3)', 'lineWidth': 2},
+						'pointLabels': {'display': False}
+					}
+				}
+			}
+
+			resp = await client.post("https://quickchart.io/chart/create", json={"chart": chart_data,"width": 128,"height": 128,"format": "png","backgroundColor": "transparent"})
+			if resp.status_code == 200: return resp.json().get('url')
+			return ""
 
 	@commands.command()
 	async def lyrics(self, c:commands.Context):
 		await c.message.delete()
-		if self.is_active:
-			self.is_active = False
-			self.lyrics_loop.stop()
-			await self.bot.change_presence(activity=None)
-			logger.info("Lyrics disabled")
-		else:
-			self.is_active = True; self.current_track = ""
-			self.lyrics_loop.start()
-			logger.info("Lyrics enabled")
+		argument = c.message.content.removeprefix('.lyrics').strip()
+		match argument:
+			case 'stats' | 'features' | 'web':
+				logger.info(f'audio-features fetching {"disabled" if self.create_stats else "enabled"}')
+				self.create_stats = not self.create_stats
+			case _:
+				if self.is_active:
+					self.is_active = False
+					self.lyrics_loop.stop()
+					await self.bot.change_presence(activity=None)
+					logger.info("Lyrics disabled")
+				else:
+					self.is_active = True; self.current_track = ""
+					self.lyrics_loop.start()
+					logger.info("Lyrics enabled")
 
 	@tasks.loop(seconds=1)
 	async def lyrics_loop(self):
-		info = await get_media_info()
+		info = await utils.get_media_info()
 		if not info: 
 			self.is_active = False; self.lyrics_loop.stop(); await self.bot.change_presence(activity=None) # type: ignore
 			logger.info('Lyrics disabled due to no active SMTC sessions'); return
@@ -142,13 +193,15 @@ class Status(commands.Cog):
 			self.last_sent_line = ""
 			self.track_provider = None
 			self.track_duration = 0
+			self.track_isrc = ''
 			self.last_reported_pos = -1
 			self.elapsed = 0.0
 			self.last_tick = time.time()
 			self.urls = {}
+			self.stats = {}
 
 			asyncio.create_task(self._fetch_lyrics(full_name))
-			asyncio.create_task(self._fetch_and_proxy_cover(artist, title, full_name))
+			asyncio.create_task(self._fetch_and_proxy_data(full_name))
 	
 		#timer
 		now = time.time()
@@ -196,7 +249,9 @@ class Status(commands.Cog):
 				assets = {
 					'large_image': self.urls.get('cover', '') if self.urls.get('cover', '') else f'mp:external/{DEFAULT_COVER}',
 					'large_text': f'by {artist}'[:128],
-					'large_url': self.urls.get('artist', '') if self.urls.get('artist', '') else ''
+					'large_url': self.urls.get('artist', '') if self.urls.get('artist', '') else None, # type: ignore
+					'small_image': self.urls.get('small_image', '') if self.urls.get('small_image', '') else None,
+					'small_text': f'BPM: {int(self.stats["tempo"])}\nKey: {"Major" if self.stats["key"] == 1 else "Minor"}' if self.stats else None
 				}
 			)
 			await self.bot.change_presence(activity=activity)
