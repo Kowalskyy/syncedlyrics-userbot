@@ -10,7 +10,7 @@ import utils
 import time
 
 logger = getLogger('status')
-PITCH_CLASSES = {0: 'C', 1: 'C♯ / D♭', 2: 'D', 3: 'D♯ / E♭', 4: 'E', 5: 'F', 6: 'F♯ / G♭', 7: 'G', 8: 'G♯ / A♭', 9: 'A', 10: 'A♯ / B♭', 11: 'B'} #idk where do i put it, let it be here
+PITCH_CLASSES = {-1: '?', 0: 'C', 1: 'C♯ / D♭', 2: 'D', 3: 'D♯ / E♭', 4: 'E', 5: 'F', 6: 'F♯ / G♭', 7: 'G', 8: 'G♯ / A♭', 9: 'A', 10: 'A♯ / B♭', 11: 'B'} #idk where do i put it, let it be here
 
 class Status(commands.Cog):
 	def __init__(self, bot:commands.Bot):
