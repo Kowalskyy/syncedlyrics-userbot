@@ -10,6 +10,7 @@ import utils
 import time
 
 logger = getLogger('status')
+PITCH_CLASSES = {0: 'C', 1: 'C♯ / D♭', 2: 'D', 3: 'D♯ / E♭', 4: 'E', 5: 'F', 6: 'F♯ / G♭', 7: 'G', 8: 'G♯ / A♭', 9: 'A', 10: 'A♯ / B♭', 11: 'B'} #idk where do i put it, let it be here
 
 class Status(commands.Cog):
 	def __init__(self, bot:commands.Bot):
@@ -202,7 +203,7 @@ class Status(commands.Cog):
 
 			asyncio.create_task(self._fetch_lyrics(full_name))
 			asyncio.create_task(self._fetch_and_proxy_data(full_name))
-	
+
 		#timer
 		now = time.time()
 		delta = now - getattr(self, 'last_tick', now)
@@ -222,7 +223,7 @@ class Status(commands.Cog):
 			for ts, text in self.current_lyrics:
 				if self.elapsed >= ts: current_line = text
 				else: break
-		
+
 		#da updater
 		if current_line != self.last_sent_line:
 			self.last_sent_line = current_line
@@ -251,7 +252,7 @@ class Status(commands.Cog):
 					'large_text': f'by {artist}'[:128],
 					'large_url': self.urls.get('artist', '') if self.urls.get('artist', '') else None, # type: ignore
 					'small_image': self.urls.get('small_image', '') if self.urls.get('small_image', '') else None,
-					'small_text': f'BPM: {int(self.stats["tempo"])}\nKey: {"Major" if self.stats["key"] == 1 else "Minor"}' if self.stats else None
+					'small_text': f'BPM: {int(self.stats["tempo"])}\nKey: {PITCH_CLASSES.get(self.stats["key"])} {"Major" if self.stats["mode"] == 1 else "Minor"}' if self.stats else None
 				}
 			)
 			await self.bot.change_presence(activity=activity)
