@@ -119,9 +119,11 @@ class Status(commands.Cog):
 	async def _fetch_mood(self):
 		if not self.create_stats: return None
 		base_url = 'https://api.reccobeats.com/v1/track'
+		rbid = None
 
 		async with httpx.AsyncClient() as client:
-			rbid = ((await client.get(f'{base_url}?ids={self.track_isrc}')).json().get('content', [{}]) or [{}])[0].get('id', '')
+			try: rbid = ((await client.get(f'{base_url}?ids={self.track_isrc}')).json().get('content', [{}]) or [{}])[0].get('id', '')
+			except Exception as e: logger.error(e)
 			if not rbid: return
 			data = (await client.get(f'{base_url}/{rbid}/audio-features')).json()
 			_, __, ___, a, d, e, i, k, l, ld, m, s, t, v = data.values()
