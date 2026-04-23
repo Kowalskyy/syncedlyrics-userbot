@@ -107,9 +107,12 @@ class Status(commands.Cog):
 
 		if not cover_url or self.current_track != query: logger.error(f'cover not found'); return
 
+		urls = [cover_url]
 		try:
-			urls = [cover_url]
 			if self.track_isrc and (url := await self._fetch_mood()): urls.append(url)
+		except Exception as e: logger.error(f'error fetching mood: {e}')
+
+		try:
 			proxified_urls = await utils.proxy_image(urls, self.bot)
 			self.urls['cover'] = f'mp:external/{proxified_urls[0]}'
 			if len(proxified_urls) >= 2: self.urls['small_image'] = f'mp:external/{proxified_urls[1]}'
@@ -255,7 +258,8 @@ class Status(commands.Cog):
 					'large_url': self.urls.get('artist', '') if self.urls.get('artist', '') else None, # type: ignore
 					'small_image': self.urls.get('small_image', '') if self.urls.get('small_image', '') else None,
 					'small_text': f'BPM: {int(self.stats["tempo"])}\nKey: {PITCH_CLASSES.get(self.stats["key"])} {"Major" if self.stats["mode"] == 1 else "Minor"}' if self.stats else None
-				}
+				},
+				buttons = [ActivityButton('This RPC is open-source!', 'https://github.com/kowalskyy/syncedlyrics-userbot')]
 			)
 			await self.bot.change_presence(activity=activity)
 
