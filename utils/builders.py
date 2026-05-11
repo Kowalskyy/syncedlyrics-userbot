@@ -4,7 +4,7 @@ from fuzzywuzzy import fuzz
 
 PITCH_CLASSES = {-1: '?', 0: 'C', 1: 'C♯ / D♭', 2: 'D', 3: 'D♯ / E♭', 4: 'E', 5: 'F', 6: 'F♯ / G♭', 7: 'G', 8: 'G♯ / A♭', 9: 'A', 10: 'A♯ / B♭', 11: 'B'} #idk where do i put it, let it be here
 
-def build_activity(track:dict, current_line:str, lyrics:list, ts_payload:dict) -> Activity:
+def build_activity(track:dict, current_line:str, lyrics:list, ts_payload:dict, return_basic:bool = False) -> Activity:
 	title, artist, album, isrc, duration, provider, urls, stats = track.values()
 	base = {
 		'type': ActivityType.listening,
@@ -19,10 +19,11 @@ def build_activity(track:dict, current_line:str, lyrics:list, ts_payload:dict) -
 			'large_image': f"mp:external/{urls.get('proxified_cover_url', '') or DEFAULT_COVER}",
 			'large_text': f'on {album}'[:128] if album else None,
 			'large_url': urls.get('album_url', None),
-		}
+		},
+		'buttons': [ActivityButton('This RPC is open-source!', 'https://github.com/kowalskyy/syncedlyrics-userbot')],
 	}
 
-	if lyrics:
+	if lyrics and not return_basic:
 		base['details'] = f'🎤 {current_line}'[:128]
 		base['details_url'] = urls.get('album_url', None)
 		base['state'] = title[:128]

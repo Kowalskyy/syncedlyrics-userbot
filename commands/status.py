@@ -1,5 +1,5 @@
 from discord.ext import commands, tasks
-from config import DEFAULT_LINE
+from config import DEFAULT_LINE, TOKEN
 from logging import getLogger
 import syncedlyrics
 import asyncio
@@ -15,9 +15,9 @@ class Status(commands.Cog):
 		self.settings = {
 			'is_active': False,
 			'track_statistics': True,
-			# 'stream_to_status': False
+			'stream_to_status': True
 		}
-		
+
 		self.current_track = ''
 		self.track = {} # title:str, artist:str, album:str, isrc:str, duration:int, provider:str (deezer/apple.music), 
 		# ^ urls:dict (track_url:str, album_url:str, artist_url:str, cover_url:str, proxified_cover_url:str, small_image:str, proxified_small_image:str)
@@ -28,6 +28,8 @@ class Status(commands.Cog):
 		self.last_reported_pose = -1
 		self.elapsed = 0.0
 		self.last_tick = time.time()
+
+		self._is_rpc_sent = False
 
 	async def _fetch_lyrics(self, query:str):
 		raw = await asyncio.to_thread(syncedlyrics.search, query, False, True, None, ['Musixmatch', 'Lrclib', 'NetEase', 'Megalobiz'])
@@ -67,7 +69,7 @@ class Status(commands.Cog):
 			proxified_images = await utils.proxy_image(images, self.bot)
 			self.track['urls']['proxified_cover_url'] = proxified_images[0]
 			if len(proxified_images) >= 2: self.track['urls']['proxified_small_image'] = proxified_images[1]
-			self.last_sent_line = 'covers!'
+			self.last_sent_line = 'covers!'; self._is_rpc_sent = False
 		except Exception as e: logger.error(f'Error proxifying images: {e}')
 		if not self.track.get('statistics', {}): self.track['statistics'] = {}
 
@@ -105,6 +107,10 @@ class Status(commands.Cog):
 			return ''
 		except Exception as e: logger.error(f'Error fetching track statistics: {e}'); return ''
 
+	async def _send_status(self, lyric: str):
+		async with httpx.AsyncClient() as client:
+			await client.patch("https://discord.com/api/v8/users/@me/settings", headers={"Authorization": TOKEN,"User-Agent": "Mozilla/5.0","Content-Type": "application/json","Accept": "*/*"}, json={'custom_status': {'text': lyric[:128]}})
+
 	@commands.command()
 	async def lyrics(self, c:commands.Context):
 		argument = c.message.content.removeprefix('.lyrics').strip()
@@ -112,15 +118,19 @@ class Status(commands.Cog):
 
 		match argument.lower():
 			case 'stats' | 'features' | 'web' | 'statistics': s['track_statistics'] = not s['track_statistics']; await c.message.delete(); logger.info(f'Fetching track statistics {"en" if s["track_statistics"] else "dis"}abled')
-			# case 'status': s['stream_to_status'] = not s['stream_to_status']; await c.message.delete(); logger.info(f'Streaming to status {"en" if s["stream_to_status"] else "dis"}abled')
+			case 'status': s['stream_to_status'] = not s['stream_to_status']; await c.message.delete(); logger.info(f'Streaming to status {"en" if s["stream_to_status"] else "dis"}abled')
 			case '':
 				await c.message.delete()
 				s['is_active'] = not s['is_active']
 				if s['is_active']: self.track = {}; self.lyrics_loop.start(); logger.info('Lyrics enabled.')
-				else: self.lyrics_loop.stop(); await self.bot.change_presence(activity=None); logger.info('Lyrics disabled.')
+				else: 
+					self.current_track = ''; self.track = {}; self.found_lyrics = []
+					self.last_sent_line = ''; self.last_reported_pose = -1; self.elapsed = 0.0
+					self.last_tick = time.time(); self._is_rpc_sent = False; self.lyrics_loop.stop(); 
+					await self.bot.change_presence(activity=None); logger.info('Lyrics disabled.')
 			case 'settings' | 'cfg' | _: return await c.message.edit(content=f'Currently {"enabled" if s["is_active"] else "disabled"}.\n'
-									   f'Small image a.k.a. track statistics {"enabled" if s["track_statistics"] else "disabled"} (.stats/.web/.features).')
-									#    f'Status streaming {"enabled" if s["stream_to_status"] else "disabled"} (.status).')	
+									   f'Small image a.k.a. track statistics {"enabled" if s["track_statistics"] else "disabled"} (.stats/.web/.features).\n'
+									   f'Status streaming {"enabled" if s["stream_to_status"] else "disabled"} (.status).')	
 
 	@tasks.loop(seconds=1)
 	async def lyrics_loop(self):
@@ -151,6 +161,7 @@ class Status(commands.Cog):
 			self.last_reported_pose = -1
 			self.elapsed = 0.0
 			self.last_tick = time.time()
+			self._is_rpc_sent = False
 
 			asyncio.create_task(self._fetch_lyrics(query))
 			asyncio.create_task(self._fetch_track_info(title, artist))
@@ -161,6 +172,8 @@ class Status(commands.Cog):
 		self.last_tick = now
 
 		if info['status'] == 5: return
+		prev_pos = getattr(self, 'last_reported_pos', info['position'])
+		time_jump = abs(info['position'] - (prev_pos + delta)) > 10
 
 		if info['position'] != getattr(self, 'last_reported_pos', -1):
 			self.last_reported_pos = info['position']
@@ -176,7 +189,7 @@ class Status(commands.Cog):
 				else: break
 
 		#da updater
-		if current_line != self.last_sent_line:
+		if current_line != self.last_sent_line or time_jump:
 			self.last_sent_line = current_line
 
 			#da timestamper
@@ -188,7 +201,11 @@ class Status(commands.Cog):
 			ts_payload = {'start': start_time}
 			if end_time: ts_payload['end'] = end_time
 
-			await self.bot.change_presence(activity=utils.build_activity(self.track, current_line, self.found_lyrics, ts_payload))
+			# await self.bot.change_presence(activity=utils.build_activity(self.track, current_line, self.found_lyrics, ts_payload))
+			if self.settings['stream_to_status']: 
+				if not self._is_rpc_sent or time_jump: self._is_rpc_sent = True; await self.bot.change_presence(activity=utils.build_activity(self.track, current_line, self.found_lyrics, ts_payload, True))
+				if current_line != DEFAULT_LINE: return await self._send_status(current_line)
+			else: await self.bot.change_presence(activity=utils.build_activity(self.track, current_line, self.found_lyrics, ts_payload))
 
 	@lyrics_loop.before_loop
 	async def before_lyrics(self): await self.bot.wait_until_ready()
