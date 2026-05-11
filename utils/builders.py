@@ -19,8 +19,7 @@ def build_activity(track:dict, current_line:str, lyrics:list, ts_payload:dict, r
 			'large_image': f"mp:external/{urls.get('proxified_cover_url', '') or DEFAULT_COVER}",
 			'large_text': f'on {album}'[:128] if album else None,
 			'large_url': urls.get('album_url', None),
-		},
-		'buttons': [ActivityButton('This RPC is open-source!', 'https://github.com/kowalskyy/syncedlyrics-userbot')],
+		}
 	}
 
 	if lyrics and not return_basic:
